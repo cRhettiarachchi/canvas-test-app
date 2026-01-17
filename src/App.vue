@@ -1,47 +1,35 @@
 <script setup lang="ts">
-import HelloWorld from './components/HelloWorld.vue'
-import TheWelcome from './components/TheWelcome.vue'
+import { StaticCanvas, FabricText, Canvas, Rect, Circle, FabricImage } from 'fabric'
+import { onMounted, ref } from 'vue'
+import { CanvasClass } from './lib/utils/canvas/canvas'
+
+const canvasEl = ref<HTMLCanvasElement | null>(null)
+
+onMounted(async () => {
+  if (!canvasEl.value) return
+  // Initialize interactive canvas
+  const fabricCanvas = new CanvasClass(canvasEl.value)
+
+  fabricCanvas.createRectangle()
+})
 </script>
 
 <template>
-  <header>
-    <img alt="Vue logo" class="logo" src="./assets/logo.svg" width="125" height="125" />
-
-    <div class="wrapper">
-      <HelloWorld msg="You did it!" />
-    </div>
-  </header>
-
-  <main>
-    <TheWelcome />
-  </main>
+  <div class="canvas-container">
+    <h2>Fabric.js Canvas Demo</h2>
+    <canvas ref="canvasEl" width="800" height="600"></canvas>
+  </div>
 </template>
 
 <style scoped>
-header {
-  line-height: 1.5;
+.canvas-container {
+  padding: 20px;
+  text-align: center;
 }
-
-.logo {
+canvas {
+  border: 2px solid #ddd;
+  background-color: #fafafa;
   display: block;
-  margin: 0 auto 2rem;
-}
-
-@media (min-width: 1024px) {
-  header {
-    display: flex;
-    place-items: center;
-    padding-right: calc(var(--section-gap) / 2);
-  }
-
-  .logo {
-    margin: 0 2rem 0 0;
-  }
-
-  header .wrapper {
-    display: flex;
-    place-items: flex-start;
-    flex-wrap: wrap;
-  }
+  margin: 0 auto;
 }
 </style>
