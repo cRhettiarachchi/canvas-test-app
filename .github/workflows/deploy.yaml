@@ -5,9 +5,18 @@ on:
     branches:
       - dev
       - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
 
     steps:
@@ -31,6 +40,28 @@ jobs:
       - name: Build Vue project
         run: pnpm run build
 
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 1
+
+  deploy-dev:
+    needs: build
+    runs-on: ubuntu-latest
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/dev') || (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev')
+    environment:
+      name: dev
+      url: https://${{ secrets.DEV_S3_BUCKET }}
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -38,28 +69,15 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Determine environment
-        id: env
-        run: |
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            echo "environment=prod" >> $GITHUB_OUTPUT
-            echo "s3_bucket=${{ secrets.PROD_S3_BUCKET }}" >> $GITHUB_OUTPUT
-            echo "cloudfront_id=${{ secrets.PROD_CLOUDFRONT_ID }}" >> $GITHUB_OUTPUT
-          else
-            echo "environment=dev" >> $GITHUB_OUTPUT
-            echo "s3_bucket=${{ secrets.DEV_S3_BUCKET }}" >> $GITHUB_OUTPUT
-            echo "cloudfront_id=${{ secrets.DEV_CLOUDFRONT_ID }}" >> $GITHUB_OUTPUT
-          fi
-
       - name: Deploy to S3
         run: |
-          aws s3 sync dist/ s3://${{ steps.env.outputs.s3_bucket }} \
+          aws s3 sync dist/ s3://${{ secrets.DEV_S3_BUCKET }} \
             --delete \
             --cache-control "max-age=31536000,public" \
             --exclude "*.html" \
             --exclude "*.json"
 
-          aws s3 sync dist/ s3://${{ steps.env.outputs.s3_bucket }} \
+          aws s3 sync dist/ s3://${{ secrets.DEV_S3_BUCKET }} \
             --exclude "*" \
             --include "*.html" \
             --include "*.json" \
@@ -68,11 +86,59 @@ jobs:
       - name: Invalidate CloudFront cache
         run: |
           aws cloudfront create-invalidation \
-            --distribution-id ${{ steps.env.outputs.cloudfront_id }} \
+            --distribution-id ${{ secrets.DEV_CLOUDFRONT_ID }} \
             --paths "/*"
 
       - name: Deployment summary
         run: |
-          echo "🚀 Deployed to ${{ steps.env.outputs.environment }}"
-          echo "📦 S3 Bucket: ${{ steps.env.outputs.s3_bucket }}"
-          echo "☁️ CloudFront: ${{ steps.env.outputs.cloudfront_id }}"
+          echo "🚀 Deployed to dev"
+          echo "📦 S3 Bucket: ${{ secrets.DEV_S3_BUCKET }}"
+          echo "☁️ CloudFront: ${{ secrets.DEV_CLOUDFRONT_ID }}"
+
+  deploy-prod:
+    needs: build
+    runs-on: ubuntu-latest
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.environment == 'prod')
+    environment:
+      name: prod
+      url: https://${{ secrets.PROD_S3_BUCKET }}
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy to S3
+        run: |
+          aws s3 sync dist/ s3://${{ secrets.PROD_S3_BUCKET }} \
+            --delete \
+            --cache-control "max-age=31536000,public" \
+            --exclude "*.html" \
+            --exclude "*.json"
+
+          aws s3 sync dist/ s3://${{ secrets.PROD_S3_BUCKET }} \
+            --exclude "*" \
+            --include "*.html" \
+            --include "*.json" \
+            --cache-control "max-age=0,no-cache,no-store,must-revalidate"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.PROD_CLOUDFRONT_ID }} \
+            --paths "/*"
+
+      - name: Deployment summary
+        run: |
+          echo "🚀 Deployed to prod"
+          echo "📦 S3 Bucket: ${{ secrets.PROD_S3_BUCKET }}"
+          echo "☁️ CloudFront: ${{ secrets.PROD_CLOUDFRONT_ID }}"
