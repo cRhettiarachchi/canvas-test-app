@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { CanvasClass } from './lib/utils/canvas/canvas'
+import { CanvasClass } from './lib/utils/canvas/Canvas'
 
 const canvasEl = ref<HTMLCanvasElement | null>(null)
 const canvasContainer = ref<HTMLDivElement | null>(null)
