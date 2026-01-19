@@ -55,26 +55,31 @@ jobs:
             --delete \
             --cache-control "max-age=31536000,public,immutable"
 
-      - name: Debug Secrets
-        run: |
-          echo "EC2_HOST is set: ${{ secrets.EC2_HOST != '' }}"
-          echo "SSH Key length: ${#EC2_SSH_PRIVATE_KEY}"
-          echo "First line of key:"
-          echo "$EC2_SSH_PRIVATE_KEY" | head -n 1
-        env:
-          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+      # - name: Debug Secrets
+      #   run: |
+      #     echo "EC2_HOST is set: ${{ secrets.EC2_HOST != '' }}"
+      #     echo "SSH Key length: ${#EC2_SSH_PRIVATE_KEY}"
+      #     echo "First line of key:"
+      #     echo "$EC2_SSH_PRIVATE_KEY" | head -n 1
+      #   env:
+      #     EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
 
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          echo "$EC2_SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+        env:
+          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
 
       - name: Deploy index.html to EC2
         run: |
-          scp -i ~/.ssh/deploy_key dist/index.html deploy@${{ secrets.EC2_HOST }}:/tmp/index.html
-          ssh -i ~/.ssh/deploy_key deploy@${{ secrets.EC2_HOST }} "sudo mv /tmp/index.html /usr/share/nginx/my-vue-app/index.html && sudo systemctl reload nginx"
+          scp -i ~/.ssh/deploy_key dist/index.html deploy@$EC2_HOST:/tmp/index.html
+          ssh -i ~/.ssh/deploy_key deploy@$EC2_HOST "sudo mv /tmp/index.html /usr/share/nginx/my-vue-app/index.html && sudo systemctl reload nginx"
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
 
       - name: Deployment complete
         run: echo "🎉 Deployed to http://ec2.charihettiarachchi.it.com"
