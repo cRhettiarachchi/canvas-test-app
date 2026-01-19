@@ -55,6 +55,13 @@ jobs:
             --delete \
             --cache-control "max-age=31536000,public,immutable"
 
+      - name: Debug Secrets
+        run: |
+          echo "EC2_HOST is set: ${{ secrets.EC2_HOST != '' }}"
+          echo "SSH Key length: ${#EC2_SSH_KEY}"
+          echo "First line of key:"
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" | head -n 1
+
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
