@@ -9,6 +9,14 @@
   "scripts": {
     "dev": "vite",
     "build": "run-p type-check \"build-only {@}\" --",
+    "build:dev": "run-p type-check \"build-only:dev {@}\" --",
+    "build:int": "run-p type-check \"build-only:int {@}\" --",
+    "build:staging": "run-p type-check \"build-only:staging {@}\" --",
+    "build:production": "run-p type-check \"build-only:production {@}\" --",
+    "preview": "vite preview",
+    "build-only:dev": "BUILD_ENV=dev vite build",
+    "build-only:int": "BUILD_ENV=int vite build",
+    "build-only:staging": "BUILD_ENV=staging vite build",
     "preview": "vite preview",
     "test:unit": "vitest",
     "build-only": "vite build",
@@ -48,3 +56,4 @@
     "vue-tsc": "^3.2.2"
   }
 }
+
