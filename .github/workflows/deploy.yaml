@@ -1,5 +1,4 @@
 name: Deploy Vue App
-
 on:
   push:
     branches: [main]
@@ -21,7 +20,6 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -55,29 +53,44 @@ jobs:
             --delete \
             --cache-control "max-age=31536000,public,immutable"
 
-      # - name: Debug Secrets
-      #   run: |
-      #     echo "EC2_HOST is set: ${{ secrets.EC2_HOST != '' }}"
-      #     echo "SSH Key length: ${#EC2_SSH_PRIVATE_KEY}"
-      #     echo "First line of key:"
-      #     echo "$EC2_SSH_PRIVATE_KEY" | head -n 1
-      #   env:
-      #     EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-
-      - name: Setup SSH
+      - name: Setup SSH (with verbose output)
         run: |
+          set -e
+          echo "Creating .ssh directory..."
           mkdir -p ~/.ssh
+
+          echo "Writing SSH key..."
           echo "$EC2_SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+
+          echo "Setting permissions..."
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+
+          echo "Verifying key file..."
+          ls -la ~/.ssh/deploy_key
+          head -n 1 ~/.ssh/deploy_key
+
+          echo "Scanning SSH host: $EC2_HOST"
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts || { echo "ssh-keyscan failed"; exit 1; }
+
+          echo "SSH setup complete!"
         env:
           EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           EC2_HOST: ${{ secrets.EC2_HOST }}
 
+      - name: Test SSH Connection
+        run: |
+          echo "Testing SSH connection..."
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy@$EC2_HOST "echo 'SSH connection successful!'" || { echo "SSH connection failed"; exit 1; }
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+
       - name: Deploy index.html to EC2
         run: |
-          scp -i ~/.ssh/deploy_key dist/index.html deploy@$EC2_HOST:/tmp/index.html
-          ssh -i ~/.ssh/deploy_key deploy@$EC2_HOST "sudo mv /tmp/index.html /usr/share/nginx/my-vue-app/index.html && sudo systemctl reload nginx"
+          echo "Copying index.html..."
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no dist/index.html deploy@$EC2_HOST:/tmp/index.html
+
+          echo "Moving to nginx directory and reloading..."
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy@$EC2_HOST "sudo mv /tmp/index.html /usr/share/nginx/my-vue-app/index.html && sudo systemctl reload nginx"
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
 
