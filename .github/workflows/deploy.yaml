@@ -57,7 +57,7 @@ jobs:
         with:
           src: ./dist/index.html
           host: ${{ secrets.EC2_HOST }}
-          remote: /usr/share/nginx/my-vue-app
+          remote: /usr/share/nginx/modules
           port: 22
           user: deploy
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
