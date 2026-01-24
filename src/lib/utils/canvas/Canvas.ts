@@ -96,6 +96,14 @@ export class CanvasClass {
 
     frame.set('id', frameId)
 
+    const test = () => {
+      return 0
+    }
+
+    const abcd = {
+      testObj: 'test',
+    }
+
     this.frames.set(frameId, {
       frame,
       image: null,
@@ -267,6 +275,8 @@ export class CanvasClass {
 
   enableDragAndDrop = (dropZone?: HTMLElement): void => {
     const zone = dropZone || this.canvas.wrapperEl
+
+    const test = 'a'
 
     if (!zone) {
       console.error('No drop zone element found')
