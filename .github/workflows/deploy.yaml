@@ -98,78 +98,30 @@
 #         run: echo "🎉 Deployed to http://ec2.charihettiarachchi.it.com"
 
 name: Deploy Vue App
-
 on:
   push:
-    branches:
-      - main
-      - 'feat/**'
+    branches: [main]
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Target environment'
+        description: 'Environment'
         required: true
         type: choice
         options:
           - dev
-          - staging
         default: dev
-      ref:
-        description: 'Branch or commit to deploy (leave empty for current branch)'
-        required: false
-        type: string
 
+# Add permissions for OIDC
 permissions:
-  id-token: write
-  contents: read
-
-env:
-  S3_BUCKET: canva-dev-90
-  S3_ASSETS_PATH: assets
+  id-token: write # Required for OIDC
+  contents: read # Required for checkout
 
 jobs:
-  setup:
-    runs-on: ubuntu-latest
-    outputs:
-      environments: ${{ steps.set-env.outputs.environments }}
-      ref: ${{ steps.set-ref.outputs.ref }}
-    steps:
-      - name: Determine environments
-        id: set-env
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            # Manual trigger - deploy to selected environment only
-            echo "environments=[\"${{ inputs.environment }}\"]" >> $GITHUB_OUTPUT
-          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
-            # Push to main - deploy to all environments
-            echo "environments=[\"dev\",\"staging\"]" >> $GITHUB_OUTPUT
-          else
-            # Push to feat/* - deploy to dev only for testing
-            echo "environments=[\"dev\"]" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Determine ref
-        id: set-ref
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ inputs.ref }}" ]; then
-            echo "ref=${{ inputs.ref }}" >> $GITHUB_OUTPUT
-          else
-            echo "ref=${{ github.ref }}" >> $GITHUB_OUTPUT
-          fi
-
   deploy:
-    needs: setup
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        environment: ${{ fromJson(needs.setup.outputs.environments) }}
-      fail-fast: false
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.setup.outputs.ref }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -185,8 +137,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build for ${{ matrix.environment }}
-        run: pnpm run build:${{ matrix.environment }}
+      - name: Build Vue project
+        run: pnpm run build:dev
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -196,74 +148,50 @@ jobs:
 
       - name: Upload assets to S3
         run: |
-          echo "📦 Uploading assets to S3..."
-          aws s3 sync dist/assets/ s3://${{ env.S3_BUCKET }}/${{ env.S3_ASSETS_PATH }}/ \
-            --cache-control "max-age=31536000,public,immutable" \
-            --no-progress
-          echo "✅ Assets uploaded to s3://${{ env.S3_BUCKET }}/${{ env.S3_ASSETS_PATH }}/"
+          aws s3 sync dist/assets/ s3://canva-dev-90/assets/ \
+            --delete \
+            --cache-control "max-age=31536000,public,immutable"
 
-      - name: Set EC2 target path
-        id: ec2-path
+      - name: Setup SSH (with verbose output)
         run: |
-          case "${{ matrix.environment }}" in
-            dev)
-              echo "path=/usr/share/nginx/my-vue-dev/index.html" >> $GITHUB_OUTPUT
-              ;;
-            staging)
-              echo "path=/usr/share/nginx/my-vue-app/index.html" >> $GITHUB_OUTPUT
-              ;;
-          esac
-
-      - name: Setup SSH
-        run: |
+          set -e
+          echo "Creating .ssh directory..."
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+
+          echo "Writing SSH key..."
+          echo "$EC2_SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+
+          echo "Setting permissions..."
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Deploy index.html to EC2 (${{ matrix.environment }})
+          echo "Verifying key file..."
+          ls -la ~/.ssh/deploy_key
+          head -n 1 ~/.ssh/deploy_key
+
+          echo "Scanning SSH host: $EC2_HOST"
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts || { echo "ssh-keyscan failed"; exit 1; }
+
+          echo "SSH setup complete!"
+        env:
+          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+
+      - name: Test SSH Connection
         run: |
-          echo "🚀 Deploying index.html for ${{ matrix.environment }}..."
+          echo "Testing SSH connection..."
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy@$EC2_HOST "echo 'SSH connection successful!'" || { echo "SSH connection failed"; exit 1; }
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
 
-          # Copy to temp location first
-          scp -i ~/.ssh/deploy_key \
-            -o StrictHostKeyChecking=no \
-            dist/index.html \
-            deploy@${{ secrets.EC2_HOST }}:/tmp/index_${{ matrix.environment }}.html
-
-          # Move to final location with sudo (atomic operation)
-          ssh -i ~/.ssh/deploy_key \
-            -o StrictHostKeyChecking=no \
-            deploy@${{ secrets.EC2_HOST }} \
-            "sudo mv /tmp/index_${{ matrix.environment }}.html ${{ steps.ec2-path.outputs.path }}"
-
-          echo "✅ Deployed to ${{ steps.ec2-path.outputs.path }}"
-
-      - name: Verify deployment
+      - name: Deploy index.html to EC2
         run: |
-          echo "🔍 Verifying file exists..."
-          ssh -i ~/.ssh/deploy_key \
-            -o StrictHostKeyChecking=no \
-            deploy@${{ secrets.EC2_HOST }} \
-            "ls -la ${{ steps.ec2-path.outputs.path }}"
+          echo "Copying index.html..."
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no dist/index.html deploy@$EC2_HOST:/tmp/index.html
 
-      - name: Cleanup SSH key
-        if: always()
-        run: rm -f ~/.ssh/deploy_key
+          echo "Moving to nginx directory"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy@$EC2_HOST "sudo mv /tmp/index.html /usr/share/nginx/my-vue-app/index.html"
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
 
-  summary:
-    needs: [setup, deploy]
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Deployment Summary
-        run: |
-          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Ref:** ${{ needs.setup.outputs.ref }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Environments:** ${{ needs.setup.outputs.environments }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Environment URLs" >> $GITHUB_STEP_SUMMARY
-          echo "- **dev:** http://dev.charihettiarachchi.it.com (or whatever URL)" >> $GITHUB_STEP_SUMMARY
-          echo "- **staging:** http://ec2.charihettiarachchi.it.com" >> $GITHUB_STEP_SUMMARY
+      - name: Deployment complete
+        run: echo "🎉 Deployed to http://ec2.charihettiarachchi.it.com"
