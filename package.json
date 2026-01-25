@@ -17,6 +17,7 @@
     "build-only:dev": "BUILD_ENV=dev vite build",
     "build-only:int": "BUILD_ENV=int vite build",
     "build-only:staging": "BUILD_ENV=staging vite build",
+    "build-only:production": "BUILD_ENV=production vite build",
     "preview": "vite preview",
     "test:unit": "vitest",
     "build-only": "vite build",
