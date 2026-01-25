@@ -11,7 +11,7 @@ function getBase() {
     production: 'https://dop5fq635s7uz.cloudfront.net/', // Your CloudFront domain
     dev: 'https://dop5fq635s7uz.cloudfront.net/',
     staging: 'asdlksdakjsldilm',
-    int: 'asdlksdakjsldilm',
+    int: 'aaaaaaaadakjsldilm',
   }
 
   if (
