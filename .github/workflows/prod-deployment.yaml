@@ -1,0 +1,152 @@
+name: Deploy Production FE-V2
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_type:
+        description: 'Deployment source'
+        required: true
+        type: choice
+        options:
+          - branch
+          - commit
+      ref:
+        description: 'Branch name or commit hash'
+        required: true
+        type: string
+      confirm_production:
+        description: 'Type "DEPLOY-TO-PRODUCTION" to confirm'
+        required: true
+        type: string
+
+env:
+  S3_BUCKET: canva-dev-90
+  S3_ASSETS_PATH: assets
+  DEV_EC2_PATH: /usr/share/nginx/my-vue-app
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # Safety check job
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm_production }}" != "DEPLOY-TO-PRODUCTION" ]; then
+            echo "❌ Invalid confirmation. Deployment cancelled."
+            exit 1
+          fi
+          echo "✅ Confirmation validated"
+
+      - name: Display deployment info
+        run: |
+          echo "🚀 Production Deployment Summary"
+          echo "================================"
+          echo "Type: ${{ github.event.inputs.deployment_type }}"
+          echo "Ref: ${{ github.event.inputs.ref }}"
+          echo "Triggered by: ${{ github.actor }}"
+          echo "Timestamp: $(date)"
+
+  deploy:
+    needs: validate
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+          fetch-depth: 0 # Full history for commit verification
+
+      - name: Verify checkout
+        run: |
+          echo "Current commit: $(git rev-parse HEAD)"
+          echo "Short hash: $(git rev-parse --short HEAD)"
+          git log -1 --oneline
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Vue project (production)
+        run: pnpm run build:production
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::977324179069:role/GitHubActionsDeployRole
+          aws-region: ap-northeast-1
+
+      - name: Upload assets to S3
+        run: |
+          aws s3 sync dist/assets/ s3://${{ env.S3_BUCKET }}/${{ env.S3_ASSETS_PATH }}/ \
+            --delete \
+            --cache-control "max-age=31536000,public,immutable"
+
+      - name: Setup SSH
+        run: |
+          set -e
+          mkdir -p ~/.ssh
+          echo "$EC2_SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+        env:
+          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+
+      - name: Test SSH Connection
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "echo 'SSH connection successful!'"
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+
+      - name: Deploy to Production EC2
+        run: |
+          echo "🚀 Deploying to PRODUCTION..."
+
+          # Deploy index.html
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no dist/index.html $EC2_USER@$EC2_HOST:/tmp/index-prod.html
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST \
+            "sudo mv /tmp/index-prod.html ${{ env.PROD_EC2_PATH }}/index.html"
+
+          echo "✅ Production deployment complete"
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+
+      - name: Create deployment record
+        run: |
+          echo "📝 Deployment Record" >> $GITHUB_STEP_SUMMARY
+          echo "===================" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: Production" >> $GITHUB_STEP_SUMMARY
+          echo "- **Ref**: ${{ github.event.inputs.ref }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Type**: ${{ github.event.inputs.deployment_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: $(git rev-parse --short HEAD)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployed by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify deployment success
+        if: success()
+        run: |
+          echo "🎉 Production deployment completed successfully!"
+          echo "Deployed commit: $(git rev-parse --short HEAD)"
+
+      - name: Notify deployment failure
+        if: failure()
+        run: |
+          echo "❌ Production deployment failed!"
+          exit 1
