@@ -10,9 +10,16 @@ function getBase() {
   const CDN_BASE = {
     production: 'https://dop5fq635s7uz.cloudfront.net/', // Your CloudFront domain
     dev: 'https://dop5fq635s7uz.cloudfront.net/',
+    staging: 'asdlksdakjsldilm',
+    int: 'asdlksdakjsldilm',
   }
 
-  if (buildEnv === 'production' || buildEnv === 'dev') {
+  if (
+    buildEnv === 'production' ||
+    buildEnv === 'dev' ||
+    buildEnv === 'staging' ||
+    buildEnv === 'int'
+  ) {
     return CDN_BASE[buildEnv]
   }
 

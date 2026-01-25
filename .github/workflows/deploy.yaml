@@ -1,103 +1,5 @@
-# name: Deploy Vue App
-# on:
-#   push:
-#     branches: [main]
-#   workflow_dispatch:
-#     inputs:
-#       environment:
-#         description: 'Environment'
-#         required: true
-#         type: choice
-#         options:
-#           - dev
-#         default: dev
-
-# # Add permissions for OIDC
-# permissions:
-#   id-token: write # Required for OIDC
-#   contents: read # Required for checkout
-
-# jobs:
-#   deploy:
-#     runs-on: ubuntu-latest
-#     steps:
-#       - name: Checkout code
-#         uses: actions/checkout@v4
-
-#       - name: Install pnpm
-#         uses: pnpm/action-setup@v4
-#         with:
-#           version: 9
-
-#       - name: Setup Node.js
-#         uses: actions/setup-node@v4
-#         with:
-#           node-version: '22'
-#           cache: 'pnpm'
-
-#       - name: Install dependencies
-#         run: pnpm install --frozen-lockfile
-
-#       - name: Build Vue project
-#         run: pnpm run build:dev
-
-#       - name: Configure AWS credentials
-#         uses: aws-actions/configure-aws-credentials@v4
-#         with:
-#           role-to-assume: arn:aws:iam::977324179069:role/GitHubActionsDeployRole
-#           aws-region: ap-northeast-1
-
-#       - name: Upload assets to S3
-#         run: |
-#           aws s3 sync dist/assets/ s3://canva-dev-90/assets/ \
-#             --delete \
-#             --cache-control "max-age=31536000,public,immutable"
-
-#       - name: Setup SSH (with verbose output)
-#         run: |
-#           set -e
-#           echo "Creating .ssh directory..."
-#           mkdir -p ~/.ssh
-
-#           echo "Writing SSH key..."
-#           echo "$EC2_SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
-
-#           echo "Setting permissions..."
-#           chmod 600 ~/.ssh/deploy_key
-
-#           echo "Verifying key file..."
-#           ls -la ~/.ssh/deploy_key
-#           head -n 1 ~/.ssh/deploy_key
-
-#           echo "Scanning SSH host: $EC2_HOST"
-#           ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts || { echo "ssh-keyscan failed"; exit 1; }
-
-#           echo "SSH setup complete!"
-#         env:
-#           EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-#           EC2_HOST: ${{ secrets.EC2_HOST }}
-
-#       - name: Test SSH Connection
-#         run: |
-#           echo "Testing SSH connection..."
-#           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy@$EC2_HOST "echo 'SSH connection successful!'" || { echo "SSH connection failed"; exit 1; }
-#         env:
-#           EC2_HOST: ${{ secrets.EC2_HOST }}
-
-#       - name: Deploy index.html to EC2
-#         run: |
-#           echo "Copying index.html..."
-#           scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no dist/index.html deploy@$EC2_HOST:/tmp/index.html
-
-#           echo "Moving to nginx directory"
-#           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy@$EC2_HOST "sudo mv /tmp/index.html /usr/share/nginx/my-vue-app/index.html"
-#         env:
-#           EC2_HOST: ${{ secrets.EC2_HOST }}
-
-#       - name: Deployment complete
-#         run: echo "🎉 Deployed to http://ec2.charihettiarachchi.it.com"
-
 name: Deploy Vue App
+
 on:
   push:
     branches: [main]
@@ -111,10 +13,16 @@ on:
           - dev
         default: dev
 
-# Add permissions for OIDC
+env:
+  S3_BUCKET: canva-dev-90
+  S3_ASSETS_PATH: assets
+  DEV_EC2_PATH: /usr/share/nginx/my-vue-app
+  STG_EC2_PATH: /usr/share/nginx/stg-my-vue-app
+  INT_EC2_PATH: /usr/share/nginx/int-my-vue-app
+
 permissions:
-  id-token: write # Required for OIDC
-  contents: read # Required for checkout
+  id-token: write
+  contents: read
 
 jobs:
   deploy:
@@ -137,7 +45,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build Vue project
+      # Build for dev and upload assets to S3
+      - name: Build Vue project (dev)
         run: pnpm run build:dev
 
       - name: Configure AWS credentials
@@ -148,50 +57,72 @@ jobs:
 
       - name: Upload assets to S3
         run: |
-          aws s3 sync dist/assets/ s3://canva-dev-90/assets/ \
+          aws s3 sync dist/assets/ s3://${{ env.S3_BUCKET }}/${{ env.S3_ASSETS_PATH }}/ \
             --delete \
             --cache-control "max-age=31536000,public,immutable"
 
-      - name: Setup SSH (with verbose output)
+      # Save dev index.html
+      - name: Save dev index.html
+        run: cp dist/index.html index-dev.html
+
+      # Build for staging
+      - name: Build Vue project (staging)
+        run: pnpm run build:staging
+
+      - name: Save staging index.html
+        run: cp dist/index.html index-staging.html
+
+      # Build for integration
+      - name: Build Vue project (integration)
+        run: pnpm run build:int
+
+      - name: Save integration index.html
+        run: cp dist/index.html index-int.html
+
+      # Setup SSH once
+      - name: Setup SSH
         run: |
           set -e
-          echo "Creating .ssh directory..."
           mkdir -p ~/.ssh
-
-          echo "Writing SSH key..."
           echo "$EC2_SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
-
-          echo "Setting permissions..."
           chmod 600 ~/.ssh/deploy_key
-
-          echo "Verifying key file..."
-          ls -la ~/.ssh/deploy_key
-          head -n 1 ~/.ssh/deploy_key
-
-          echo "Scanning SSH host: $EC2_HOST"
-          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts || { echo "ssh-keyscan failed"; exit 1; }
-
-          echo "SSH setup complete!"
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
         env:
           EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           EC2_HOST: ${{ secrets.EC2_HOST }}
 
       - name: Test SSH Connection
         run: |
-          echo "Testing SSH connection..."
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy@$EC2_HOST "echo 'SSH connection successful!'" || { echo "SSH connection failed"; exit 1; }
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy@$EC2_HOST "echo 'SSH connection successful!'"
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
 
-      - name: Deploy index.html to EC2
+      # Deploy all three index.html files
+      - name: Deploy index.html files to EC2
         run: |
-          echo "Copying index.html..."
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no dist/index.html deploy@$EC2_HOST:/tmp/index.html
+          # Deploy dev
+          echo "Deploying dev index.html..."
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no index-dev.html deploy@$EC2_HOST:/tmp/index-dev.html
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy@$EC2_HOST \
+            "sudo mv /tmp/index-dev.html ${{ env.DEV_EC2_PATH }}/index.html"
 
-          echo "Moving to nginx directory"
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy@$EC2_HOST "sudo mv /tmp/index.html /usr/share/nginx/my-vue-app/index.html"
+          # Deploy staging
+          echo "Deploying staging index.html..."
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no index-staging.html deploy@$EC2_HOST:/tmp/index-staging.html
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy@$EC2_HOST \
+            "sudo mv /tmp/index-staging.html ${{ env.STG_EC2_PATH }}/index.html"
+
+          # Deploy integration
+          echo "Deploying integration index.html..."
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no index-int.html deploy@$EC2_HOST:/tmp/index-int.html
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy@$EC2_HOST \
+            "sudo mv /tmp/index-int.html ${{ env.INT_EC2_PATH }}/index.html"
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
 
       - name: Deployment complete
-        run: echo "🎉 Deployed to http://ec2.charihettiarachchi.it.com"
+        run: |
+          echo "🎉 Deployment complete!"
+          echo "Dev: http://ec2.charihettiarachchi.it.com"
+          echo "Staging: Check your staging URL"
+          echo "Integration: Check your integration URL"
