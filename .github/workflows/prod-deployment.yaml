@@ -1,16 +1,7 @@
-name: Deploy Production FE-V2
+name: Deploy Vue App PROD
 
 on:
   workflow_dispatch:
-    inputs:
-      commit_hash:
-        description: 'Commit hash (optional - leave empty to use selected branch from dropdown above)'
-        required: false
-        type: string
-      confirm_production:
-        description: 'Type "DEPLOY-TO-PRODUCTION" to confirm'
-        required: true
-        type: string
 
 env:
   S3_BUCKET: canva-dev-90
@@ -22,61 +13,13 @@ permissions:
   contents: read
 
 jobs:
-  # Safety check job
-  validate:
-    runs-on: ubuntu-latest
-    outputs:
-      deployment_ref: ${{ steps.determine-ref.outputs.ref }}
-      deployment_type: ${{ steps.determine-ref.outputs.type }}
-    steps:
-      - name: Validate confirmation
-        run: |
-          if [ "${{ github.event.inputs.confirm_production }}" != "DEPLOY-TO-PRODUCTION" ]; then
-            echo "❌ Invalid confirmation. Deployment cancelled."
-            exit 1
-          fi
-          echo "✅ Confirmation validated"
-
-      - name: Determine deployment ref
-        id: determine-ref
-        run: |
-          if [ -n "${{ github.event.inputs.commit_hash }}" ]; then
-            echo "ref=${{ github.event.inputs.commit_hash }}" >> $GITHUB_OUTPUT
-            echo "type=commit" >> $GITHUB_OUTPUT
-            echo "🎯 Using commit hash: ${{ github.event.inputs.commit_hash }}"
-          else
-            echo "ref=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-            echo "type=branch" >> $GITHUB_OUTPUT
-            echo "🌿 Using branch: ${{ github.ref_name }}"
-          fi
-
-      - name: Display deployment info
-        run: |
-          echo "🚀 Production Deployment Summary"
-          echo "================================"
-          echo "Type: ${{ steps.determine-ref.outputs.type }}"
-          echo "Ref: ${{ steps.determine-ref.outputs.ref }}"
-          echo "Triggered by: ${{ github.actor }}"
-          echo "Timestamp: $(date)"
-
   deploy:
-    needs: validate
     runs-on: ubuntu-latest
-    environment:
-      name: production
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.validate.outputs.deployment_ref }}
-          fetch-depth: 0 # Full history for commit verification
-
-      - name: Verify checkout
-        run: |
-          echo "Current commit: $(git rev-parse HEAD)"
-          echo "Short hash: $(git rev-parse --short HEAD)"
-          git log -1 --oneline
+          ref: ${{ github.ref }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -86,14 +29,15 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-level: '22'
+          node-version: '22'
           cache: 'pnpm'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build Vue project (production)
-        run: pnpm run build:production
+      # Build for dev and upload assets to S3
+      - name: Build Vue project (dev)
+        run: pnpm run build:dev
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -107,6 +51,7 @@ jobs:
             --delete \
             --cache-control "max-age=31536000,public,immutable"
 
+      # Setup SSH once
       - name: Setup SSH
         run: |
           set -e
@@ -120,44 +65,25 @@ jobs:
 
       - name: Test SSH Connection
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "echo 'SSH connection successful!'"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy@$EC2_HOST "echo 'SSH connection successful!'"
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
 
-      - name: Deploy to Production EC2
+      # Deploy all three index.html files
+      - name: Deploy index.html files to EC2
         run: |
-          echo "🚀 Deploying to PRODUCTION..."
+          # Deploy dev
+          echo "Deploying dev index.html..."
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no index.html deploy@$EC2_HOST:/tmp/index.html
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy@$EC2_HOST \
+            "sudo mv /tmp/index.html ${{ env.DEV_EC2_PATH }}/index.html"
 
-          # Deploy index.html
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no dist/index.html $EC2_USER@$EC2_HOST:/tmp/index-prod.html
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST \
-            "sudo mv /tmp/index-prod.html ${{ env.DEV_EC2_PATH }}/index.html"
-
-          echo "✅ Production deployment complete"
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
 
-      - name: Create deployment record
+      - name: Deployment complete
         run: |
-          echo "📝 Deployment Record" >> $GITHUB_STEP_SUMMARY
-          echo "===================" >> $GITHUB_STEP_SUMMARY
-          echo "- **Environment**: Production" >> $GITHUB_STEP_SUMMARY
-          echo "- **Ref**: ${{ needs.validate.outputs.deployment_ref }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Type**: ${{ needs.validate.outputs.deployment_type }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit**: $(git rev-parse --short HEAD)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Deployed by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Timestamp**: $(date -u)" >> $GITHUB_STEP_SUMMARY
-
-      - name: Notify deployment success
-        if: success()
-        run: |
-          echo "🎉 Production deployment completed successfully!"
-          echo "Deployed commit: $(git rev-parse --short HEAD)"
-
-      - name: Notify deployment failure
-        if: failure()
-        run: |
-          echo "❌ Production deployment failed!"
-          exit 1
+          echo "🎉 Deployment complete!"
+          echo "Dev: http://ec2.charihettiarachchi.it.com"
+          echo "Staging: Check your staging URL"
+          echo "Integration: Check your integration URL"
